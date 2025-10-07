@@ -32,23 +32,34 @@ exports.uploadReport = async (req, res) => {
       terminalMap[row.terminal_code] = row;
     });
 
-    // 4. Merge Excel with DB data
+    const exchangeRate = 137; // Birr to USD conversion rate
+
+    // 4. Merge Excel with DB data + Add USD conversion columns
     const mergedData = excelData.map(item => {
       const dbInfo = terminalMap[item["TERMINAL ID"]] || {};
+
+      // safely convert to numbers before dividing
+      const visaAmount = Number(item["SUM VISA AMOUNT"]) || 0;
+      const mcAmount = Number(item["SUM MC AMOUNT"]) || 0;
+      const upAmount = Number(item["SUM UP AMOUNT"]) || 0;
+
       return {
         merchant_name: item["MER_ENSE"] || "Unknown",
         terminal_id: item["TERMINAL ID"],
         sum_local_txn: item["SUM LOCAL TXN"] || 0,
         sum_local_txn_amount: item["SUM LOCAL TXN AMNT"] || 0,
         sum_visa_txn: item["SUM VISA TXN"] || 0,
-        sum_visa_amount: item["SUM VISA AMOUNT"] || 0,
+        sum_visa_amount: visaAmount,
+        visa_dollar: (visaAmount / exchangeRate).toFixed(2),
         sum_mc_txn: item["SUM MC TXN"] || 0,
-        sum_mc_amount: item["SUM MC AMOUNT"] || 0,
+        sum_mc_amount: mcAmount,
+        mc_dollar: (mcAmount / exchangeRate).toFixed(2),
         sum_up_txn: item["SUM UP TXN"] || 0,
-        sum_up_amount: item["SUM UP AMOUNT"] || 0,
+        sum_up_amount: upAmount,
+        up_dollar: (upAmount / exchangeRate).toFixed(2),
         sum_total_txn: item["SUM TOTAL TXN"] || 0,
         sum_total_amount: item["SUM TOTAL AMOUNT"] || 0,
-        terminal_name: dbInfo.terminal_name || "Unknown",
+       // terminal_name: dbInfo.terminal_name || "Unknown",
         branch: dbInfo.branch || "Unknown",
         district: dbInfo.district || "Unknown",
       };

@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const cors = require("cors");
 
 const terminalRoutes = require("./routes/terminalRoutes");
 const reportRoutes = require("./routes/reportRoutes");
@@ -8,18 +9,28 @@ const authRoutes = require("./routes/authRoutes");
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Enable CORS
+app.use(cors({
+  origin: "http://172.24.111.254:5174", // frontend origin
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
+
+// Parse JSON requests
 app.use(express.json());
 
-//app.use(express.json());
+// Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/terminals", terminalRoutes);
+app.use("/api/reports", reportRoutes);
 
+// Default route
 app.get("/", (req, res) => {
   res.send("Hello from RMS Backend!");
 });
 
-app.use("/api/terminals", terminalRoutes);
-app.use("/api/reports", reportRoutes);
-
+// Start server
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+  console.log(`🚀 Server running at http://localhost:${port}`);
 });

@@ -10,7 +10,7 @@ router.post("/change-password", authGuard, authCtrl.changePassword);
 
 // Protected
 router.get("/me", authGuard, authCtrl.getProfile);
-router.post("/logout", authGuard, authCtrl.logout);
+//router.post("/logout", authGuard, authCtrl.logout);
 
 // Admin-only
 router.post("/create", authGuard, adminGuard, authCtrl.createUser);

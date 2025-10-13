@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model branch {
+  branch_id   Int        @id @default(autoincrement())
+  branch_name String     @db.VarChar(100)
+  district_id Int
+  district    district   @relation(fields: [district_id], references: [district_id], onDelete: NoAction, onUpdate: NoAction, map: "branch_ibfk_1")
+  terminal    terminal[]
+
+  @@index([district_id], map: "district_id")
+}
+
+model currency {
+  currency_id   Int       @id @default(autoincrement())
+  currency_code String    @unique(map: "currency_code") @db.VarChar(10)
+  exchange_rate Decimal   @db.Decimal(10, 4)
+  last_updated  DateTime? @default(now()) @db.Timestamp(0)
+}
+
+model district {
+  district_id   Int      @id @default(autoincrement())
+  district_name String   @unique(map: "district_name") @db.VarChar(100)
+  branch        branch[]
+}
+
+model terminal {
+  terminal_id   Int     @id @default(autoincrement())
+  terminal_code String  @unique(map: "terminal_code") @db.VarChar(50)
+  merchant_name String? @db.VarChar(100)
+  branch_id     Int
+  branch        branch  @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction, map: "terminal_ibfk_1")
+
+  @@index([branch_id], map: "branch_id")
+}
+
+model terminals {
+  terminal_id   String  @id @db.VarChar(50)
+  terminal_name String? @db.VarChar(100)
+  branch        String? @db.VarChar(100)
+  district      String? @db.VarChar(100)
+}
+
+model users {
+  user_id       Int         @id @default(autoincrement())
+  username      String      @unique(map: "username") @db.VarChar(100)
+  password_hash String      @db.VarChar(255)
+  first_name    String?     @db.VarChar(100)
+  last_name     String?     @db.VarChar(100)
+  role          users_role? @default(user)
+  is_active     Boolean?    @default(true)
+  created_at    DateTime?   @default(now()) @db.Timestamp(0)
+}
+
+enum users_role {
+  admin
+  user
+}

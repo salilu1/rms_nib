@@ -1,7 +1,8 @@
-const db = require("../config/db");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-require("dotenv").config();
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
 
 const SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || "10", 10);
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -11,15 +12,22 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ message: "username and password required" });
+    if (!username || !password)
+      return res.status(400).json({ message: "username and password required" });
 
-    const [rows] = await db.query(
-      "SELECT user_id, username, password_hash, role, is_active FROM users WHERE username = ? LIMIT 1",
-      [username]
-    );
+    // ✅ Prisma equivalent of SELECT ... WHERE username = ?
+    const user = await prisma.users.findUnique({
+      where: { username },
+      select: {
+        user_id: true,
+        username: true,
+        password_hash: true,
+        role: true,
+        is_active: true,
+      },
+    });
 
-    if (!rows.length) return res.status(401).json({ message: "Invalid credentials" });
-    const user = rows[0];
+    if (!user) return res.status(401).json({ message: "Invalid credentials" });
     if (!user.is_active) return res.status(403).json({ message: "Account is inactive" });
 
     const match = await bcrypt.compare(password, user.password_hash);
@@ -35,22 +43,33 @@ exports.login = async (req, res) => {
   }
 };
 
-// CREATE USER (ADMIN ONLY)
+// CREATE USER
 exports.createUser = async (req, res) => {
   try {
     const { username, password, first_name, last_name, role } = req.body;
-    if (!username || !password) return res.status(400).json({ message: "username and password required" });
+    if (!username || !password)
+      return res.status(400).json({ message: "username and password required" });
 
-    const [exists] = await db.query("SELECT user_id FROM users WHERE username = ? LIMIT 1", [username]);
-    if (exists.length) return res.status(409).json({ message: "Username already exists" });
+    const existingUser = await prisma.users.findUnique({
+      where: { username },
+      select: { user_id: true },
+    });
+    if (existingUser) return res.status(409).json({ message: "Username already exists" });
 
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
-    const [result] = await db.query(
-      "INSERT INTO users (username, password_hash, first_name, last_name, role) VALUES (?, ?, ?, ?, ?)",
-      [username, hash, first_name || null, last_name || null, role === "admin" ? "admin" : "user"]
-    );
 
-    res.status(201).json({ message: "User created", user_id: result.insertId });
+    const newUser = await prisma.users.create({
+      data: {
+        username,
+        password_hash: hash,
+        first_name: first_name || null,
+        last_name: last_name || null,
+        role: role === "admin" ? "admin" : "user",
+      },
+      select: { user_id: true },
+    });
+
+    res.status(201).json({ message: "User created", user_id: newUser.user_id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -61,16 +80,17 @@ exports.createUser = async (req, res) => {
 exports.softDeleteUser = async (req, res) => {
   try {
     const { user_id } = req.params;
-    if (parseInt(user_id, 10) === req.user.user_id) {
+
+    if (parseInt(user_id, 10) === req.user.user_id)
       return res.status(400).json({ message: "Admin cannot deactivate own account" });
-    }
 
-    const [result] = await db.query(
-      "UPDATE users SET is_active = 0 WHERE user_id = ? AND is_active = 1",
-      [user_id]
-    );
+    const user = await prisma.users.updateMany({
+      where: { user_id: Number(user_id), is_active: true },
+      data: { is_active: false },
+    });
 
-    if (result.affectedRows === 0) return res.status(404).json({ message: "User not found or already inactive" });
+    if (user.count === 0)
+      return res.status(404).json({ message: "User not found or already inactive" });
 
     res.json({ message: "User deactivated" });
   } catch (err) {
@@ -79,29 +99,37 @@ exports.softDeleteUser = async (req, res) => {
   }
 };
 
-// LOGOUT (OPTIONAL BLACKLIST)
-exports.logout = async (req, res) => {
-  try {
-    const token = req.token;
-    if (!token) return res.status(400).json({ message: "No token provided" });
+// LOGOUT (Optional Blacklist)
+// exports.logout = async (req, res) => {
+//   try {
+//     const token = req.token;
+//     if (!token) return res.status(400).json({ message: "No token provided" });
 
-    await db.query("INSERT INTO token_blacklist (token) VALUES (?)", [token]);
-    res.json({ message: "Logged out" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+//     await prisma.token_blacklist.create({ data: { token } });
+//     res.json({ message: "Logged out" });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
 
 // GET PROFILE
 exports.getProfile = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      "SELECT user_id, username, first_name, last_name, role, is_active FROM users WHERE user_id = ? LIMIT 1",
-      [req.user.user_id]
-    );
-    if (!rows.length) return res.status(404).json({ message: "User not found" });
-    res.json(rows[0]);
+    const user = await prisma.users.findUnique({
+      where: { user_id: req.user.user_id },
+      select: {
+        user_id: true,
+        username: true,
+        first_name: true,
+        last_name: true,
+        role: true,
+        is_active: true,
+      },
+    });
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -112,29 +140,25 @@ exports.getProfile = async (req, res) => {
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
+    if (!currentPassword || !newPassword)
       return res.status(400).json({ message: "Current and new password are required" });
-    }
 
-    // Get user from DB
-    const [rows] = await db.query(
-      "SELECT password_hash FROM users WHERE user_id = ? LIMIT 1",
-      [req.user.user_id]
-    );
+    const user = await prisma.users.findUnique({
+      where: { user_id: req.user.user_id },
+      select: { password_hash: true },
+    });
 
-    if (!rows.length) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    const user = rows[0];
-
-    // Check current password
     const match = await bcrypt.compare(currentPassword, user.password_hash);
     if (!match) return res.status(401).json({ message: "Current password is incorrect" });
 
-    // Hash new password
-    const newHash = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_SALT_ROUNDS || 10, 10));
+    const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
-    // Update DB
-    await db.query("UPDATE users SET password_hash = ? WHERE user_id = ?", [newHash, req.user.user_id]);
+    await prisma.users.update({
+      where: { user_id: req.user.user_id },
+      data: { password_hash: newHash },
+    });
 
     res.json({ message: "Password changed successfully" });
   } catch (err) {

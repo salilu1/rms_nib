@@ -1,6 +1,5 @@
 generator client {
   provider = "prisma-client-js"
-
 }
 
 datasource db {
@@ -32,11 +31,13 @@ model district {
 }
 
 model terminal {
-  terminal_id   Int     @id @default(autoincrement())
-  terminal_code String  @unique(map: "terminal_code") @db.VarChar(50)
-  merchant_name String? @db.VarChar(100)
-  branch_id     Int
-  branch        branch  @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction, map: "terminal_ibfk_1")
+  terminal_id            Int       @id @default(autoincrement())
+  terminal_code          String    @unique(map: "terminal_code") @db.VarChar(50)
+  merchant_name          String?   @db.VarChar(100)
+  branch_id              Int
+  grand_total            Decimal?  @default(0.00) @db.Decimal(15, 2)
+  grand_total_updated_at DateTime? @db.DateTime(0)
+  branch                 branch    @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction, map: "terminal_ibfk_1")
 
   @@index([branch_id], map: "branch_id")
 }

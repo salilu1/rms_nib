@@ -60,6 +60,42 @@ model users {
   created_at    DateTime?   @default(now()) @db.Timestamp(0)
 }
 
+model merchanttransactionhistory {
+  id                 Int       @id @default(autoincrement())
+  terminal_name      String    @db.VarChar(100)
+  terminal_id        String    @db.VarChar(50)
+  sum_local_txn      Int?      @default(0)
+  sum_local_txn_amnt Decimal?  @default(0.00) @db.Decimal(12, 2)
+  sum_visa_txn       Int?      @default(0)
+  sum_visa_amount    Decimal?  @default(0.00) @db.Decimal(12, 2)
+  sum_mc_txn         Int?      @default(0)
+  sum_mc_amount      Decimal?  @default(0.00) @db.Decimal(12, 2)
+  sum_cup_txn        Int?      @default(0)
+  sum_cup_amount     Decimal?  @default(0.00) @db.Decimal(12, 2)
+  sum_total_txn      Int?      @default(0)
+  sum_total_amount   Decimal?  @default(0.00) @db.Decimal(12, 2)
+  transaction_date   DateTime? @default(dbgenerated("(curdate())")) @db.Date
+  created_at         DateTime? @default(now()) @db.Timestamp(0)
+}
+
+model branchtransactionhistory {
+  id                  Int       @id @default(autoincrement())
+  branch_name         String    @db.VarChar(100)
+  terminal_id         String    @db.VarChar(50)
+  cash_advance        Int?      @default(0)
+  cash_advance_amount Decimal?  @default(0.00) @db.Decimal(12, 2)
+  visa_txn            Int?      @default(0)
+  visa_amount         Decimal?  @default(0.00) @db.Decimal(12, 2)
+  mc_txn              Int?      @default(0)
+  mc_amount           Decimal?  @default(0.00) @db.Decimal(12, 2)
+  cup_txn             Int?      @default(0)
+  cup_amount          Decimal?  @default(0.00) @db.Decimal(12, 2)
+  total_txn           Int?      @default(0)
+  total_amount        Decimal?  @default(0.00) @db.Decimal(12, 2)
+  transaction_date    DateTime? @default(dbgenerated("(curdate())")) @db.Date
+  created_at          DateTime? @default(now()) @db.Timestamp(0)
+}
+
 enum users_role {
   admin
   user

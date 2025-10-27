@@ -6,6 +6,7 @@ const terminalRoutes = require("./routes/terminalRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const authRoutes = require("./routes/authRoutes");
 const currencyRoutes = require("./routes/currencyRoutes");
+const exportRoutes = require("./routes/exportRoutes");
 
 
 const app = express();
@@ -27,6 +28,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/terminals", terminalRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/currency", currencyRoutes);
+app.use("/api/export", exportRoutes);
 
 // Default route
 app.get("/", (req, res) => {

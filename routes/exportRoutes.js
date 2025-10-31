@@ -1,13 +1,17 @@
-// routes/exportRoutes.js
+
+
+
 const express = require("express");
 const router = express.Router();
-const { exportMerchantHistory, exportBranchHistory,exportTopMerchants } = require("../controllers/exportController");
+const exportController = require("../controllers/exportController");
 
-// Route to export merchant transaction history
-router.get("/merchant-history", exportMerchantHistory);
+// existing exports
+router.get("/merchant-history", exportController.exportMerchantHistory);
+router.get("/branch-history", exportController.exportBranchHistory);
+router.get("/top-merchants", exportController.exportTopMerchants);
 
-// Route to export branch transaction history
-router.get("/branch-history", exportBranchHistory);
-router.get("/top-merchants", exportTopMerchants);
+// new date-range exports
+router.get("/merchant-history/date", exportController.exportMerchantHistoryByDate);
+router.get("/branch-history/date", exportController.exportBranchHistoryByDate);
 
 module.exports = router;

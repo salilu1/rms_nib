@@ -37,10 +37,12 @@ model terminal {
   branch_id              Int
   grand_total            Decimal?  @default(0.00) @db.Decimal(15, 2)
   grand_total_updated_at DateTime? @db.DateTime(0)
+  is_deleted             Boolean   @default(false)  // <-- added soft delete column
   branch                 branch    @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction, map: "terminal_ibfk_1")
 
   @@index([branch_id], map: "branch_id")
 }
+
 
 model terminals {
   terminal_id   String  @id @db.VarChar(50)

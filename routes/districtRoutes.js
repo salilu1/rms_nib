@@ -1,0 +1,16 @@
+const express = require("express");
+const router = express.Router();
+const districtController = require("../controllers/districtController");
+const { authGuard, adminGuard } = require("../middleware/auth");
+
+router.post("/", authGuard, adminGuard, districtController.createDistrict);
+router.get("/", authGuard, districtController.getDistricts);
+router.get("/download", authGuard, districtController.downloadDistricts);
+router.get("/:id", authGuard, districtController.getDistrictById);
+router.put("/:id", authGuard, adminGuard, districtController.updateDistrict);
+router.delete("/:id", authGuard, adminGuard, districtController.deleteDistrict);
+router.get("/download", authGuard, districtController.downloadDistricts);
+
+
+
+module.exports = router;

@@ -36,36 +36,36 @@ const createTerminal = async (req, res) => {
 const getTerminals = async (req, res) => {
   try {
     const terminals = await prisma.terminal.findMany({
-      where: { is_deleted: false },
       include: {
         branch: {
           select: {
             branch_name: true,
             district: {
-              select: { district_name: true }
-            }
-          }
-        }
-      }
+              select: { district_name: true },
+            },
+          },
+        },
+      },
     });
 
-    // Optional: flatten branch + district into single object
-    const result = terminals.map(t => ({
-      terminal_id: t.terminal_id,
+    // Map terminals to include a status label
+    const formatted = terminals.map(t => ({
       terminal_code: t.terminal_code,
       merchant_name: t.merchant_name,
-      branch_name: t.branch.branch_name,
-      district_name: t.branch.district.district_name,
+      branch_name: t.branch?.branch_name || "Unknown",
+      district_name: t.branch?.district?.district_name || "Unknown",
       grand_total: t.grand_total,
-      grand_total_updated_at: t.grand_total_updated_at
+      grand_total_updated_at: t.grand_total_updated_at,
+      status: t.is_deleted ? "Inactive" : "Active", // ✅ status field
     }));
 
-    res.json(result);
-  } catch (err) {
-    console.error("Error fetching terminals:", err);
+    res.status(200).json(formatted);
+  } catch (error) {
+    console.error("Error fetching terminals:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 
 // Get terminal by ID (ignores deleted)

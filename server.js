@@ -7,6 +7,9 @@ const reportRoutes = require("./routes/reportRoutes");
 const authRoutes = require("./routes/authRoutes");
 const currencyRoutes = require("./routes/currencyRoutes");
 const exportRoutes = require("./routes/exportRoutes");
+const branchRoutes = require("./routes/branchRoutes");       // <-- NEW
+const districtRoutes = require("./routes/districtRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 
 
 const app = express();
@@ -29,6 +32,12 @@ app.use("/api/terminals", terminalRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/currency", currencyRoutes);
 app.use("/api/export", exportRoutes);
+app.use("/api/branches", branchRoutes);      // <-- NEW
+app.use("/api/districts", districtRoutes);
+
+
+app.use("/summary", dashboardRoutes);
+
 
 // Default route
 app.get("/", (req, res) => {

@@ -1,4 +1,3 @@
-
 const xlsx = require("xlsx");
 const fs = require("fs");
 const { PrismaClient } = require("@prisma/client");
@@ -6,13 +5,21 @@ const prisma = new PrismaClient();
 
 exports.uploadReport = async (req, res) => {
   try {
+    const { transaction_date } = req.body; // get transaction_date from user
+    if (!transaction_date) return res.status(400).json({ message: "transaction_date is required" });
+
+    const trxDate = new Date(transaction_date);
+    const trxDateStr = trxDate.toISOString().split("T")[0];
+
     if (!req.file) return res.status(400).send("No file uploaded");
 
-    // 1. Read uploaded Excel file
-    const filePath = req.file.path;
-    const workbook = xlsx.readFile(filePath);
-    const sheetName = workbook.SheetNames[0];
-    const excelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    // 1. Check if report for this date already exists
+    const existingHistory = await prisma.merchanttransactionhistory.findFirst({
+      where: { transaction_date: trxDate },
+    });
+    if (existingHistory) {
+      return res.status(400).json({ message: `Report for ${trxDateStr} has already been uploaded.` });
+    }
 
     // 2. Fetch terminals and currencies
     const [terminals, currencies] = await Promise.all([
@@ -29,8 +36,6 @@ exports.uploadReport = async (req, res) => {
         select: { currency_code: true, exchange_rate: true, last_updated: true },
       }),
     ]);
-
-    const todayStr = new Date().toISOString().split("T")[0];
 
     // Map terminals
     const terminalMap = {};
@@ -53,88 +58,90 @@ exports.uploadReport = async (req, res) => {
       };
     });
 
-    // Ensure all exchange rates are updated today
+    // 3. Ensure all exchange rates are updated for the transaction_date
     const missingRates = ["VC", "MC", "CUP"].filter(
-      code => !currencyMap[code] || currencyMap[code].last_updated !== todayStr
+      code => !currencyMap[code] || currencyMap[code].last_updated !== trxDateStr
     );
     if (missingRates.length > 0) {
       return res.status(400).json({
-        message: `Currency exchange rate is outdated. Please update currency before uploading the report. Missing: ${missingRates.join(", ")}`
+        message: `Currency exchange rate is missing or outdated for ${trxDateStr}. Please update exchange rate for: ${missingRates.join(", ")}`
       });
     }
 
-    // 3. Check if transaction history already exists for today
-    const existingHistory = await prisma.merchanttransactionhistory.findFirst({
-      where: { transaction_date: new Date(todayStr) },
-    });
+    // 4. Read uploaded Excel file
+    const filePath = req.file.path;
+    const workbook = xlsx.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const excelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    // 4. Insert transaction history only if first upload today
-    if (!existingHistory) {
-      const historyData = excelData
-        .filter(item => item["TERMINAL ID"]) // skip invalid rows
-        .map(item => ({
-          terminal_name: item["MER_ENSE"] || "Unknown",
-          terminal_id: String(item["TERMINAL ID"]),
-          sum_local_txn: Number(item["SUM LOCAL TXN"]) || 0,
-          sum_local_txn_amnt: Number(item["SUM LOCAL TXN AMNT"]) || 0,
-          sum_visa_txn: Number(item["SUM VISA TXN"]) || 0,
-          sum_visa_amount: Number(item["SUM VISA AMOUNT"]) || 0,
-          sum_mc_txn: Number(item["SUM MC TXN"]) || 0,
-          sum_mc_amount: Number(item["SUM MC AMOUNT"]) || 0,
-          sum_cup_txn: Number(item["SUM UP TXN"]) || 0,
-          sum_cup_amount: Number(item["SUM UP AMOUNT"]) || 0,
-          sum_total_txn: Number(item["SUM TOTAL TXN"]) || 0,
-          sum_total_amount: Number(item["SUM TOTAL AMOUNT"]) || 0,
-        }));
+    // 5. Insert transaction history
+    const historyData = excelData
+      .filter(item => item["TERMINAL ID"]) // skip invalid rows
+      .map(item => ({
+        terminal_name: item["MER_ENSE"] || "Unknown",
+        terminal_id: String(item["TERMINAL ID"]),
+        sum_local_txn: Number(item["SUM LOCAL TXN"]) || 0,
+        sum_local_txn_amnt: Number(item["SUM LOCAL TXN AMNT"]) || 0,
+        sum_visa_txn: Number(item["SUM VISA TXN"]) || 0,
+        sum_visa_amount: Number(item["SUM VISA AMOUNT"]) || 0,
+        sum_mc_txn: Number(item["SUM MC TXN"]) || 0,
+        sum_mc_amount: Number(item["SUM MC AMOUNT"]) || 0,
+        sum_cup_txn: Number(item["SUM UP TXN"]) || 0,
+        sum_cup_amount: Number(item["SUM UP AMOUNT"]) || 0,
+        sum_total_txn: Number(item["SUM TOTAL TXN"]) || 0,
+        sum_total_amount: Number(item["SUM TOTAL AMOUNT"]) || 0,
+        transaction_date: trxDate,
+      }));
 
-      if (historyData.length > 0) {
-        await prisma.merchanttransactionhistory.createMany({ data: historyData });
-      }
+    if (historyData.length > 0) {
+      await prisma.merchanttransactionhistory.createMany({ data: historyData });
     }
 
-    // 5. Merge Excel + DB, update grand_total once per terminal
-    const mergedData = [];
-    const exchangeRateMap = {
-      VC: currencyMap["VC"].rate,
-      MC: currencyMap["MC"].rate,
-      CUP: currencyMap["CUP"].rate,
-    };
-
+    // 6. Update grand_total per terminal
     for (const item of excelData) {
       const code = item["TERMINAL ID"];
       if (!code) continue;
 
       const dbInfo = terminalMap[code] || null;
       let grandTotal = dbInfo?.grand_total || 0;
-
       const lastUpdated = dbInfo?.grand_total_updated_at
         ? dbInfo.grand_total_updated_at.toISOString().split("T")[0]
         : null;
 
       const sumTotalAmount = Number(item["SUM TOTAL AMOUNT"]) || 0;
 
-      // Update grand_total if not updated today
-      if (dbInfo && lastUpdated !== todayStr) {
+      // Update grand_total if not updated for this transaction_date
+      if (dbInfo && lastUpdated !== trxDateStr) {
         grandTotal += sumTotalAmount;
 
         await prisma.terminal.updateMany({
           where: { terminal_code: code },
           data: {
             grand_total: grandTotal.toString(),
-            grand_total_updated_at: new Date(),
+            grand_total_updated_at: trxDate,
           },
         });
 
         terminalMap[code].grand_total = grandTotal;
-        terminalMap[code].grand_total_updated_at = new Date();
+        terminalMap[code].grand_total_updated_at = trxDate;
       }
+    }
 
-      // Apply exchange rates
+    // 7. Generate Excel report (optional)
+    const mergedData = excelData.map(item => {
+      const code = item["TERMINAL ID"];
+      const dbInfo = terminalMap[code] || null;
+      const exchangeRateMap = {
+        VC: currencyMap["VC"].rate,
+        MC: currencyMap["MC"].rate,
+        CUP: currencyMap["CUP"].rate,
+      };
+
       const visaAmount = Number(item["SUM VISA AMOUNT"]) || 0;
       const mcAmount = Number(item["SUM MC AMOUNT"]) || 0;
       const cupAmount = Number(item["SUM UP AMOUNT"]) || 0;
 
-      mergedData.push({
+      return {
         merchant_name: item["MER_ENSE"] || dbInfo?.merchant_name || "Unknown",
         terminal_id: code,
         sum_local_txn: Number(item["SUM LOCAL TXN"]) || 0,
@@ -149,24 +156,21 @@ exports.uploadReport = async (req, res) => {
         sum_up_amount: cupAmount,
         up_dollar: (cupAmount / exchangeRateMap.CUP).toFixed(2),
         sum_total_txn: Number(item["SUM TOTAL TXN"]) || 0,
-        sum_total_amount: sumTotalAmount,
+        sum_total_amount: Number(item["SUM TOTAL AMOUNT"]) || 0,
         branch: dbInfo?.branch || "Unknown",
         district: dbInfo?.district || "Unknown",
-        grand_total: grandTotal.toFixed(2),
-      });
-    }
+        grand_total: dbInfo?.grand_total?.toFixed(2) || "0.00",
+      };
+    });
 
-    // 6. Generate Excel file
     const newWorkbook = xlsx.utils.book_new();
     const newWorksheet = xlsx.utils.json_to_sheet(mergedData);
     xlsx.utils.book_append_sheet(newWorkbook, newWorksheet, "MergedReport");
 
-    const dateStr = new Date().toISOString().split("T")[0];
-    const fileName = `daily_merchant_pos_performance_${dateStr}.xlsx`;
+    const fileName = `daily_merchant_pos_performance_${trxDateStr}.xlsx`;
     const outputPath = `uploads/${fileName}`;
     xlsx.writeFile(newWorkbook, outputPath);
 
-    // 7. Return file
     res.download(outputPath, fileName, () => {
       fs.unlinkSync(filePath);
       fs.unlinkSync(outputPath);

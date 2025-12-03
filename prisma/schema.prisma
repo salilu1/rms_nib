@@ -79,6 +79,9 @@ model merchanttransactionhistory {
   sum_total_amount   Decimal?  @default(0.00) @db.Decimal(12, 2)
   transaction_date   DateTime? @default(dbgenerated("(curdate())")) @db.Date
   created_at         DateTime? @default(now()) @db.Timestamp(0)
+  visa_dollar        Decimal?  @default(0.00) @db.Decimal(12, 2)
+  mc_dollar          Decimal?  @default(0.00) @db.Decimal(12, 2)
+  cup_dollar         Decimal?  @default(0.00) @db.Decimal(12, 2)
 }
 
 model branchtransactionhistory {
@@ -97,6 +100,9 @@ model branchtransactionhistory {
   total_amount        Decimal?  @default(0.00) @db.Decimal(12, 2)
   transaction_date    DateTime? @default(dbgenerated("(curdate())")) @db.Date
   created_at          DateTime? @default(now()) @db.Timestamp(0)
+  visa_dollar         Decimal?  @default(0.00) @db.Decimal(12, 2)
+  mc_dollar           Decimal?  @default(0.00) @db.Decimal(12, 2)
+  cup_dollar          Decimal?  @default(0.00) @db.Decimal(12, 2)
 }
 
 enum users_role {

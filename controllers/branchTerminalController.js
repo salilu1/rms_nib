@@ -5,33 +5,27 @@ const prisma = new PrismaClient();
 
 exports.uploadBranchReport = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-
-    // 1. Get transaction_date from request body
     const { transaction_date } = req.body;
     if (!transaction_date)
-      return res.status(400).json({ message: "transaction_date is required (YYYY-MM-DD)" });
+      return res.status(400).json({ message: "transaction_date is required" });
 
-    const startOfDay = new Date(transaction_date);
-    const dateStr = transaction_date;
+    const trxDate = new Date(transaction_date);
+    const trxDateStr = trxDate.toISOString().split("T")[0];
 
-    // 2. Check if branch transaction history already exists for that date
+    if (!req.file) return res.status(400).send("No file uploaded");
+
+    // 1. Check if branch report already exists
     const existingHistory = await prisma.branchtransactionhistory.findFirst({
-      where: { transaction_date: startOfDay },
+      where: { transaction_date: trxDate },
     });
+
     if (existingHistory) {
-      return res
-        .status(400)
-        .json({ message: `Branch report already uploaded for ${dateStr}` });
+      return res.status(400).json({
+        message: `Branch report for ${trxDateStr} already uploaded.`,
+      });
     }
 
-    // 3. Read uploaded Excel file
-    const filePath = req.file.path;
-    const workbook = xlsx.readFile(filePath);
-    const sheetName = workbook.SheetNames[0];
-    const excelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-    // 4. Fetch terminals and currency rates
+    // 2. Fetch terminals & currencies
     const [terminals, currencies] = await Promise.all([
       prisma.terminal.findMany({
         select: {
@@ -39,7 +33,13 @@ exports.uploadBranchReport = async (req, res) => {
           merchant_name: true,
           grand_total: true,
           grand_total_updated_at: true,
-          branch: { select: { branch_name: true, district: { select: { district_name: true } } } },
+          is_deleted: true,
+          branch: {
+            select: {
+              branch_name: true,
+              district: { select: { district_name: true } },
+            },
+          },
         },
       }),
       prisma.currency.findMany({
@@ -47,11 +47,12 @@ exports.uploadBranchReport = async (req, res) => {
       }),
     ]);
 
-    // 5. Map terminals
+    // Terminal map
     const terminalMap = {};
-    terminals.forEach(t => {
+    terminals.forEach((t) => {
       terminalMap[t.terminal_code] = {
         merchant_name: t.merchant_name,
+        is_deleted: t.is_deleted,
         branch: t.branch?.branch_name || "Unknown",
         district: t.branch?.district?.district_name || "Unknown",
         grand_total: t.grand_total ? Number(t.grand_total) : 0,
@@ -61,114 +62,156 @@ exports.uploadBranchReport = async (req, res) => {
       };
     });
 
-    // 6. Map currencies and validate rates
+    // Currency map
     const currencyMap = {};
-    currencies.forEach(c => {
+    currencies.forEach((c) => {
       currencyMap[c.currency_code] = {
         rate: Number(c.exchange_rate),
-        last_updated: c.last_updated ? c.last_updated.toISOString().split("T")[0] : null,
+        last_updated: c.last_updated
+          ? c.last_updated.toISOString().split("T")[0]
+          : null,
       };
     });
 
+    // Validate exchange rates
     const missingRates = ["VC", "MC", "CUP"].filter(
-      code => !currencyMap[code] || currencyMap[code].last_updated !== dateStr
+      (c) => !currencyMap[c] || currencyMap[c].last_updated !== trxDateStr
     );
+
     if (missingRates.length > 0) {
       return res.status(400).json({
-        message: `Currency exchange rates not updated for ${dateStr}. Missing: ${missingRates.join(
+        message: `Currency exchange rates missing/outdated for: ${missingRates.join(
           ", "
         )}`,
       });
     }
 
-    // 7. Insert branch transaction history
-    const historyData = excelData.map(item => ({
-      branch_name: item["Branch Name"] || "Unknown",
-      terminal_id: item["Terminal ID"] || "Unknown",
-      cash_advance: parseInt(item["Cash Advance"]) || 0,
-      cash_advance_amount: parseFloat(item["Cash Advance Amount"]) || 0,
-      visa_txn: parseInt(item["VISA_TXN"]) || 0,
-      visa_amount: parseFloat(item["VISA_AMOUNT"]) || 0,
-      mc_txn: parseInt(item["MC_TXN"]) || 0,
-      mc_amount: parseFloat(item["MC_AMOUNT"]) || 0,
-      cup_txn: parseInt(item["CUP_TXN"]) || 0,
-      cup_amount: parseFloat(item["CUP_AMOUNT"]) || 0,
-      total_txn: parseInt(item["TOTAL_TXN"]) || 0,
-      total_amount: parseFloat(item["TOTAL_AMOUNT"]) || 0,
-      transaction_date: startOfDay,
-    }));
+    // Read Excel
+    const filePath = req.file.path;
+    const workbook = xlsx.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const excelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    // 3. Insert branch transaction history (skip deleted terminals)
+    const historyData = excelData
+      .filter((item) => item["Terminal ID"])
+      .filter((item) => {
+        const code = item["Terminal ID"];
+        return terminalMap[code] && !terminalMap[code].is_deleted;
+      })
+      .map((item) => {
+        const visaAmt = Number(item["VISA_AMOUNT"]) || 0;
+        const mcAmt = Number(item["MC_AMOUNT"]) || 0;
+        const cupAmt = Number(item["CUP_AMOUNT"]) || 0;
+
+        return {
+          branch_name: item["Branch Name"] || "Unknown",
+          terminal_id: String(item["Terminal ID"]),
+
+          visa_txn: Number(item["VISA_TXN"]) || 0,
+          visa_amount: visaAmt,
+          visa_dollar: (visaAmt / currencyMap["VC"].rate).toFixed(2),
+
+          mc_txn: Number(item["MC_TXN"]) || 0,
+          mc_amount: mcAmt,
+          mc_dollar: (mcAmt / currencyMap["MC"].rate).toFixed(2),
+
+          cup_txn: Number(item["CUP_TXN"]) || 0,
+          cup_amount: cupAmt,
+          cup_dollar: (cupAmt / currencyMap["CUP"].rate).toFixed(2),
+
+          cash_advance: Number(item["Cash Advance"]) || 0,
+          cash_advance_amount: Number(item["Cash Advance Amount"]) || 0,
+
+          total_txn: Number(item["TOTAL_TXN"]) || 0,
+          total_amount: Number(item["TOTAL_AMOUNT"]) || 0,
+          transaction_date: trxDate,
+        };
+      });
 
     if (historyData.length > 0) {
       await prisma.branchtransactionhistory.createMany({ data: historyData });
     }
 
-    // 8. Merge Excel + DB for grand_total update
-    const mergedData = [];
+    // 4. Update grand_total (only once per day)
     for (const item of excelData) {
       const code = item["Terminal ID"];
-      if (!code) continue;
+      const t = terminalMap[code];
 
-      const dbInfo = terminalMap[code] || null;
-      let grandTotal = dbInfo?.grand_total || 0;
-      const sumTotalAmount = parseFloat(item["TOTAL_AMOUNT"]) || 0;
+      if (!t || t.is_deleted) continue;
 
-      // Update grand_total if not updated for this date
-      if (dbInfo && dbInfo.grand_total_updated_at !== dateStr) {
-        grandTotal += sumTotalAmount;
+      const lastUpdated = t.grand_total_updated_at;
+      const sumAmount = Number(item["TOTAL_AMOUNT"]) || 0;
+
+      let grandTotal = t.grand_total;
+
+      if (lastUpdated !== trxDateStr) {
+        grandTotal += sumAmount;
+
         await prisma.terminal.updateMany({
           where: { terminal_code: code },
           data: {
             grand_total: grandTotal.toString(),
-            grand_total_updated_at: startOfDay,
+            grand_total_updated_at: trxDate,
           },
         });
-        terminalMap[code].grand_total = grandTotal;
-        terminalMap[code].grand_total_updated_at = dateStr;
+
+        t.grand_total = grandTotal;
+        t.grand_total_updated_at = trxDateStr;
       }
-
-      // Apply exchange rates
-      const visaAmount = parseFloat(item["VISA_AMOUNT"]) || 0;
-      const mcAmount = parseFloat(item["MC_AMOUNT"]) || 0;
-      const cupAmount = parseFloat(item["CUP_AMOUNT"]) || 0;
-
-      mergedData.push({
-        branch_name: item["Branch Name"] || dbInfo?.branch || "Unknown",
-        terminal_id: code,
-        cash_advance: parseInt(item["Cash Advance"]) || 0,
-        cash_advance_amount: parseFloat(item["Cash Advance Amount"]) || 0,
-        visa_txn: parseInt(item["VISA_TXN"]) || 0,
-        visa_amount: visaAmount,
-        visa_dollar: (visaAmount / currencyMap["VC"].rate).toFixed(2),
-        mc_txn: parseInt(item["MC_TXN"]) || 0,
-        mc_amount: mcAmount,
-        mc_dollar: (mcAmount / currencyMap["MC"].rate).toFixed(2),
-        cup_txn: parseInt(item["CUP_TXN"]) || 0,
-        cup_amount: cupAmount,
-        cup_dollar: (cupAmount / currencyMap["CUP"].rate).toFixed(2),
-        total_txn: parseInt(item["TOTAL_TXN"]) || 0,
-        total_amount: sumTotalAmount,
-        merchant_name: dbInfo?.merchant_name || "Unknown",
-        district: dbInfo?.district || "Unknown",
-        grand_total: grandTotal.toFixed(2),
-      });
     }
 
-    // 9. Generate Excel file
-    const newWorkbook = xlsx.utils.book_new();
-    const newWorksheet = xlsx.utils.json_to_sheet(mergedData);
-    xlsx.utils.book_append_sheet(newWorkbook, newWorksheet, "BranchReport");
+    // 5. Generate merged Excel output
+    const mergedData = excelData.map((item) => {
+      const code = item["Terminal ID"];
+      const dbInfo = terminalMap[code] || {};
 
-    const fileName = `branch_report_${dateStr}.xlsx`;
-    const outputPath = `uploads/${fileName}`;
-    xlsx.writeFile(newWorkbook, outputPath);
+      const visaAmt = Number(item["VISA_AMOUNT"]) || 0;
+      const mcAmt = Number(item["MC_AMOUNT"]) || 0;
+      const cupAmt = Number(item["CUP_AMOUNT"]) || 0;
 
-    // 10. Return downloadable file
-    res.download(outputPath, fileName, () => {
+      return {
+        branch_name: item["Branch Name"] || dbInfo.branch,
+        terminal_id: code,
+        merchant_name: dbInfo.merchant_name || "Unknown",
+        district: dbInfo.district || "Unknown",
+
+        visa_txn: Number(item["VISA_TXN"]) || 0,
+        visa_amount: visaAmt,
+        visa_dollar: (visaAmt / currencyMap["VC"].rate).toFixed(2),
+
+        mc_txn: Number(item["MC_TXN"]) || 0,
+        mc_amount: mcAmt,
+        mc_dollar: (mcAmt / currencyMap["MC"].rate).toFixed(2),
+
+        cup_txn: Number(item["CUP_TXN"]) || 0,
+        cup_amount: cupAmt,
+        cup_dollar: (cupAmt / currencyMap["CUP"].rate).toFixed(2),
+
+        cash_advance: Number(item["Cash Advance"]) || 0,
+        cash_advance_amount: Number(item["Cash Advance Amount"]) || 0,
+
+        total_txn: Number(item["TOTAL_TXN"]) || 0,
+        total_amount: Number(item["TOTAL_AMOUNT"]) || 0,
+
+        grand_total: Number(dbInfo.grand_total || 0).toFixed(2),
+      };
+    });
+
+    const wb = xlsx.utils.book_new();
+    const ws = xlsx.utils.json_to_sheet(mergedData);
+    xlsx.utils.book_append_sheet(wb, ws, "Branch Report");
+
+    const outFile = `branch_report_${trxDateStr}.xlsx`;
+    const outPath = `uploads/${outFile}`;
+    xlsx.writeFile(wb, outPath);
+
+    res.download(outPath, outFile, () => {
       fs.unlinkSync(filePath);
-      fs.unlinkSync(outputPath);
+      fs.unlinkSync(outPath);
     });
   } catch (err) {
-    console.error("Error uploading branch report:", err);
+    console.error("Branch report upload error:", err);
     res.status(500).send("Something went wrong!");
   } finally {
     await prisma.$disconnect();
